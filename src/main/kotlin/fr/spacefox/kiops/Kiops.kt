@@ -1,6 +1,5 @@
 package fr.spacefox.kiops
 
-import com.google.common.math.LongMath
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -19,17 +18,18 @@ val ABBREVS = mapOf(
                 Pair(1L,          "  ")
         ),
         AbbrevType.SI to listOf(
-                Pair(LongMath.pow(10, 15), "P"),
-                Pair(LongMath.pow(10, 12), "T"),
-                Pair(LongMath.pow(10,  9), "G"),
-                Pair(LongMath.pow(10,  6), "M"),
-                Pair(LongMath.pow(10,  3), "K"),
-                Pair(1L,                   " ")
+                Pair(1_000_000_000_000_000L, "P"),
+                Pair(1_000_000_000_000L, "T"),
+                Pair(1_000_000_000L, "G"),
+                Pair(1_000_000L, "M"),
+                Pair(1_000L, "K"),
+                Pair(1L, " ")
         ),
         AbbrevType.NONE to listOf(
                 Pair(1L, "")
         )
 )
+val random = Random()
 
 object BlockData {
     var data: ByteArray = ByteArray(0)
@@ -37,7 +37,7 @@ object BlockData {
 
 fun main(args: Array<String>) {
     try {
-        val kiops = Kiops(args[0], nbThreads = 8, targetTime = 5000, abbrevType = AbbrevType.SI)
+        val kiops = Kiops(args[0]/*, nbThreads = 8, targetTime = 5000, abbrevType = AbbrevType.SI*/)
         kiops.test()
     } catch (e: IOException) {
         e.printStackTrace()
@@ -50,8 +50,6 @@ fun main(args: Array<String>) {
 class Kiops(val path: String, val nbThreads: Int = 32, val targetTime: Long = 2000, val abbrevType: AbbrevType = AbbrevType.BINARY) {
 
     private var mediaSize: Long = 0
-    private val random = Random()
-
     init {
         RandomAccessFile(path, "r").use { raf -> this.mediaSize = raf.length() }
         println("$path, ${sizeFormat(mediaSize)}B, sectorsize ${SECTOR_SIZE}B, #threads $nbThreads, pattern random:")
@@ -82,7 +80,7 @@ class Kiops(val path: String, val nbThreads: Int = 32, val targetTime: Long = 20
         while (iops > Math.max(1, nbThreads) && blockSize < mediaSize) {
             BlockData.data = ByteArray(blockSize.toInt())
             for (i in 1..nbThreads) {
-                threads.add(KiopsThread(blockSize, targetTime))
+                threads.add(KiopsThread(ThreadParameters(path, mediaSize, blockSize, targetTime)))
             }
             for (thread in threads) {
                 thread.start()
@@ -110,34 +108,37 @@ class Kiops(val path: String, val nbThreads: Int = 32, val targetTime: Long = 20
                 sizeFormat(bitOut)
         ))
     }
+}
 
-    private inner class KiopsThread(private val blockSize: Long, private val targetTime: Long) : Thread() {
-        var count: Int = 0
-            private set
-        var realTime: Int = 0
-            private set
+data class ThreadParameters(val path: String, val mediaSize: Long, val blockSize: Long, val targetTime: Long)
 
-        override fun run() {
-            try {
-                RandomAccessFile(path, "r").use { raf ->
-                    var position: Long
-                    val startTime = System.currentTimeMillis()
-                    val endTime = startTime + targetTime
-                    while (System.currentTimeMillis() < endTime) {
-                        count++
-                        position = Math.abs(random.nextLong() % (mediaSize - blockSize))
-                        position = position and (SECTOR_SIZE - 1).inv()
-                        raf.seek(position)
-                        raf.read(BlockData.data)
-                    }
-                    realTime = (System.currentTimeMillis() - startTime).toInt()
+private class KiopsThread(private val parameters: ThreadParameters) : Thread() {
+    var count: Int = 0
+        private set
+    var realTime: Int = 0
+        private set
+
+    override fun run() {
+        try {
+            RandomAccessFile(parameters.path, "r").use { raf ->
+                var position: Long
+                val startTime = System.currentTimeMillis()
+                val endTime = startTime + parameters.targetTime
+                val maxPosition = parameters.mediaSize - parameters.blockSize
+                while (System.currentTimeMillis() < endTime) {
+                    count++
+                    position = Math.abs(random.nextLong() % maxPosition)
+                    position = position and (SECTOR_SIZE - 1).inv()
+                    raf.seek(position)
+                    raf.read(BlockData.data)
                 }
-            } catch (e: FileNotFoundException) {
-                e.printStackTrace()
-            } catch (e: IOException) {
-                e.printStackTrace()
+                realTime = (System.currentTimeMillis() - startTime).toInt()
             }
-
+        } catch (e: FileNotFoundException) {
+            e.printStackTrace()
+        } catch (e: IOException) {
+            e.printStackTrace()
         }
+
     }
 }
